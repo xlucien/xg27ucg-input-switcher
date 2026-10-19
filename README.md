@@ -17,7 +17,7 @@ A lightweight macOS menu-bar utility for switching the ASUS ROG Strix XG27UCG be
 - Automatically finds the connected XG27UCG by model name to avoid controlling another monitor
 - Detects a connected MEIZU HiFi audio device and automatically switches the monitor to USB-C
 
-The audio-device check runs locally every three seconds. It triggers once when a matching device appears and rearms after the device is disconnected, so it does not repeatedly force the input while the device remains connected.
+Audio detection is event-driven through CoreAudio. The app checks once at launch and is then dormant until macOS reports that the audio-device list changed. It triggers once when a matching device appears and rearms after the device is disconnected, so it does not repeatedly force the input while the device remains connected.
 
 ## Requirements
 

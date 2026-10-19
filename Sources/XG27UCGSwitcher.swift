@@ -16,7 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var autoSwitchMenuItem: NSMenuItem!
     private var inputItems: [NSMenuItem] = []
     private var hotKeys: [EventHotKeyRef?] = []
-    private var audioDetectionTimer: Timer?
+    private var audioDeviceListener: AudioObjectPropertyListenerBlock?
+    private var audioDeviceAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
     private var meizuHiFiWasPresent = false
     private var isSwitching = false
 
@@ -27,6 +32,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         registerGlobalHotKeys()
         startAudioDeviceDetection()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let audioDeviceListener {
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &audioDeviceAddress,
+                DispatchQueue.main,
+                audioDeviceListener
+            )
+        }
     }
 
     private func buildMenu() {
@@ -181,8 +197,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startAudioDeviceDetection() {
         checkForMeizuHiFi()
-        audioDetectionTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             self?.checkForMeizuHiFi()
+        }
+        audioDeviceListener = listener
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &audioDeviceAddress,
+            DispatchQueue.main,
+            listener
+        )
+        if status != noErr {
+            autoSwitchMenuItem.title = "自动检测启动失败（\(status)）"
         }
     }
 
