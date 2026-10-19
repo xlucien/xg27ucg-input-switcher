@@ -1,7 +1,6 @@
 import AppKit
 import CoreAudio
 import IOKit.hid
-import ServiceManagement
 
 private var m1ddcPath: String {
     if let bundled = Bundle.main.path(forResource: "m1ddc", ofType: nil, inDirectory: "bin"),
@@ -107,22 +106,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func enableLaunchAtLogin() {
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .notRegistered {
-                try service.register()
-            }
-        } catch {
-            launchAtLoginMenuItem.title = "开机启动：注册失败"
+        guard let executablePath = Bundle.main.executablePath else {
+            launchAtLoginMenuItem.title = "开机启动：找不到程序路径"
             return
         }
-
-        switch service.status {
-        case .enabled: launchAtLoginMenuItem.title = "开机启动：已启用"
-        case .requiresApproval: launchAtLoginMenuItem.title = "开机启动：需要在系统设置中允许"
-        case .notRegistered: launchAtLoginMenuItem.title = "开机启动：未启用"
-        case .notFound: launchAtLoginMenuItem.title = "开机启动：应用位置无效"
-        @unknown default: launchAtLoginMenuItem.title = "开机启动：状态未知"
+        let launchAgentsDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+        let plistURL = launchAgentsDirectory
+            .appendingPathComponent("local.louis.xg27ucg-switcher.plist")
+        let configuration: [String: Any] = [
+            "Label": "local.louis.xg27ucg-switcher",
+            "ProgramArguments": [executablePath],
+            "RunAtLoad": true,
+            "KeepAlive": false,
+            "ProcessType": "Interactive",
+            "LimitLoadToSessionType": "Aqua"
+        ]
+        do {
+            try FileManager.default.createDirectory(
+                at: launchAgentsDirectory,
+                withIntermediateDirectories: true
+            )
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: configuration,
+                format: .xml,
+                options: 0
+            )
+            try data.write(to: plistURL, options: .atomic)
+            launchAtLoginMenuItem.title = "开机启动：已启用"
+        } catch {
+            launchAtLoginMenuItem.title = "开机启动：注册失败"
         }
     }
 
