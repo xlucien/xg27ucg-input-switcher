@@ -18,6 +18,7 @@ A lightweight macOS menu-bar utility for switching the ASUS ROG Strix XG27UCG be
 - Detects a connected MEIZU HiFi audio device and automatically switches the monitor to USB-C
 - Detects a connected Corsair K70 keyboard and automatically switches the monitor to USB-C
 - Retries automatically after wake while the monitor's DDC/CI connection is recovering
+- Debounces K70 HID removal events so disconnecting the keyboard reliably rearms the next automatic switch
 
 Detection is event-driven through CoreAudio and IOKit HID notifications. The app checks once at launch and is then dormant until macOS reports a relevant device change. It triggers once when a matching device appears and rearms after the device is disconnected, so it does not repeatedly force the input while the device remains connected.
 

@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var meizuHiFiWasPresent = false
     private var k70WasPresent = false
     private var hidManager: IOHIDManager?
+    private var hidEvaluationWorkItem: DispatchWorkItem?
     private var retryWorkItems: [DispatchWorkItem] = []
     private var isSwitching = false
 
@@ -47,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         retryWorkItems.forEach { $0.cancel() }
+        hidEvaluationWorkItem?.cancel()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         if let audioDeviceListener {
             AudioObjectRemovePropertyListenerBlock(
@@ -273,13 +275,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let callback: IOHIDDeviceCallback = { context, _, _, _ in
             guard let context else { return }
             let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
-            DispatchQueue.main.async { delegate.evaluateAutoSwitch() }
+            DispatchQueue.main.async { delegate.scheduleHIDEvaluation() }
         }
         IOHIDManagerRegisterDeviceMatchingCallback(manager, callback, context)
         IOHIDManagerRegisterDeviceRemovalCallback(manager, callback, context)
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         evaluateAutoSwitch()
+    }
+
+    private func scheduleHIDEvaluation() {
+        hidEvaluationWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.evaluateAutoSwitch()
+        }
+        hidEvaluationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: workItem)
     }
 
     private func connectedK70Name() -> String? {

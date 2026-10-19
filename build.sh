@@ -6,7 +6,7 @@ BUILD_DIR="$ROOT_DIR/build"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="XG27UCG Input Switcher"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
-DMG_PATH="$DIST_DIR/XG27UCG-Input-Switcher-1.2.0.dmg"
+DMG_PATH="$DIST_DIR/XG27UCG-Input-Switcher-1.2.1.dmg"
 M1DDC_BIN="${M1DDC_BIN:-/opt/homebrew/bin/m1ddc}"
 
 [[ -x "$M1DDC_BIN" ]] || { print -u2 "m1ddc not found: $M1DDC_BIN"; exit 1; }
