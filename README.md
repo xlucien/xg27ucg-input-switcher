@@ -6,13 +6,7 @@ A lightweight macOS menu-bar utility for switching the ASUS ROG Strix XG27UCG be
 
 - Native macOS menu-bar app
 - DisplayPort, HDMI, and USB-C switching
-- Global hotkeys:
-  - `Ctrl + F1` — DisplayPort
-  - `Ctrl + F2` — USB-C
-  - `Ctrl + F3` — HDMI
-  - `Ctrl + Alt + 1` — DisplayPort
-  - `Ctrl + Alt + 2` — USB-C
-  - `Ctrl + Alt + 3` — HDMI
+- Automatically registers itself as a macOS login item
 - Bundled `m1ddc`; Homebrew is not required for the DMG build
 - Automatically finds the connected XG27UCG by model name to avoid controlling another monitor
 - Detects a connected MEIZU HiFi audio device and automatically switches the monitor to USB-C
@@ -31,7 +25,7 @@ Detection is event-driven through CoreAudio and IOKit HID notifications. The app
 
 ## Install
 
-Download the DMG from Releases, open it, and drag **XG27UCG Input Switcher** to Applications. Launch it once; a display icon then appears in the macOS menu bar.
+Download the DMG from Releases, open it, and drag **XG27UCG Input Switcher** to Applications. Launch it once; a display icon then appears in the macOS menu bar and the app registers itself to start at login.
 
 The app is ad-hoc signed, not notarized. On first launch, macOS may require right-clicking the app and choosing **Open**.
 

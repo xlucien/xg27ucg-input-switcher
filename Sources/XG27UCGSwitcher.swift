@@ -1,7 +1,7 @@
 import AppKit
-import Carbon
 import CoreAudio
 import IOKit.hid
+import ServiceManagement
 
 private var m1ddcPath: String {
     if let bundled = Bundle.main.path(forResource: "m1ddc", ofType: nil, inDirectory: "bin"),
@@ -15,8 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
     private var autoSwitchMenuItem: NSMenuItem!
+    private var launchAtLoginMenuItem: NSMenuItem!
     private var inputItems: [NSMenuItem] = []
-    private var hotKeys: [EventHotKeyRef?] = []
     private var audioDeviceListener: AudioObjectPropertyListenerBlock?
     private var audioDeviceAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "XG27UCG 输入切换")
         statusItem.button?.toolTip = "XG27UCG 输入切换"
         buildMenu()
-        registerGlobalHotKeys()
+        enableLaunchAtLogin()
         startAudioDeviceDetection()
         startKeyboardDetection()
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -72,20 +72,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         inputItems = [
-            makeInputItem("DisplayPort", value: 15, key: "\u{F704}", icon: "display"),
-            makeInputItem("USB-C", value: 26, key: "\u{F705}", icon: "cable.connector.horizontal"),
-            makeInputItem("HDMI", value: 17, key: "\u{F706}", icon: "cable.connector")
+            makeInputItem("DisplayPort", value: 15, icon: "display"),
+            makeInputItem("USB-C", value: 26, icon: "cable.connector.horizontal"),
+            makeInputItem("HDMI", value: 17, icon: "cable.connector")
         ]
         inputItems.forEach(menu.addItem)
 
         menu.addItem(.separator())
-        statusMenuItem = NSMenuItem(title: "热键：Ctrl + F1/F2/F3 或 Ctrl + Alt + 1/2/3", action: nil, keyEquivalent: "")
+        statusMenuItem = NSMenuItem(title: "状态：就绪", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
 
         autoSwitchMenuItem = NSMenuItem(title: "自动切换：等待 MEIZU HiFi 或 K70", action: nil, keyEquivalent: "")
         autoSwitchMenuItem.isEnabled = false
         menu.addItem(autoSwitchMenuItem)
+
+        launchAtLoginMenuItem = NSMenuItem(title: "开机启动：正在设置", action: nil, keyEquivalent: "")
+        launchAtLoginMenuItem.isEnabled = false
+        menu.addItem(launchAtLoginMenuItem)
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
@@ -94,55 +98,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    private func makeInputItem(_ title: String, value: Int, key: String, icon: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(switchInput(_:)), keyEquivalent: key)
-        item.keyEquivalentModifierMask = [.control]
+    private func makeInputItem(_ title: String, value: Int, icon: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(switchInput(_:)), keyEquivalent: "")
         item.target = self
         item.tag = value
         item.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
         return item
     }
 
-    private func registerGlobalHotKeys() {
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let selfPointer = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
-            guard let event, let userData else { return noErr }
-            var hotKeyID = EventHotKeyID()
-            let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
-            guard status == noErr else { return status }
-            let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
-            DispatchQueue.main.async { delegate.triggerHotKey(id: hotKeyID.id) }
-            return noErr
-        }, 1, &eventType, selfPointer, nil)
-
-        let definitions: [(id: UInt32, keyCode: UInt32, modifiers: UInt32)] = [
-            (1, 122, UInt32(controlKey)),
-            (2, 120, UInt32(controlKey)),
-            (3, 99, UInt32(controlKey)),
-            (11, 18, UInt32(controlKey | optionKey)),
-            (12, 19, UInt32(controlKey | optionKey)),
-            (13, 20, UInt32(controlKey | optionKey))
-        ]
-        for (id, keyCode, modifiers) in definitions {
-            var ref: EventHotKeyRef?
-            let hotKeyID = EventHotKeyID(signature: fourCharCode("XG27"), id: id)
-            RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
-            hotKeys.append(ref)
+    private func enableLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .notRegistered {
+                try service.register()
+            }
+        } catch {
+            launchAtLoginMenuItem.title = "开机启动：注册失败"
+            return
         }
-    }
 
-    private func fourCharCode(_ text: String) -> OSType {
-        text.utf8.reduce(0) { ($0 << 8) + OSType($1) }
-    }
-
-    private func triggerHotKey(id: UInt32) {
-        guard let item = inputItems.first(where: { item in
-            ((id == 1 || id == 11) && item.tag == 15) ||
-            ((id == 2 || id == 12) && item.tag == 26) ||
-            ((id == 3 || id == 13) && item.tag == 17)
-        }) else { return }
-        switchInput(item)
+        switch service.status {
+        case .enabled: launchAtLoginMenuItem.title = "开机启动：已启用"
+        case .requiresApproval: launchAtLoginMenuItem.title = "开机启动：需要在系统设置中允许"
+        case .notRegistered: launchAtLoginMenuItem.title = "开机启动：未启用"
+        case .notFound: launchAtLoginMenuItem.title = "开机启动：应用位置无效"
+        @unknown default: launchAtLoginMenuItem.title = "开机启动：状态未知"
+        }
     }
 
     @objc private func switchInput(_ sender: NSMenuItem) {
