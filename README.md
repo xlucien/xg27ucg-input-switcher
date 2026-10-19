@@ -49,7 +49,7 @@ The app writes VCP code `0x60` using the standard MCCS values:
 
 - DisplayPort 1: `15` (`0x0F`)
 - HDMI 1: `17` (`0x11`)
-- USB-C: `27` (`0x1B`)
+- USB-C: `26` (`0x1A`) on the tested XG27UCG firmware
 
 ## Third-party software
 

@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         inputItems = [
             makeInputItem("DisplayPort", value: 15, key: "\u{F704}", icon: "display"),
-            makeInputItem("USB-C", value: 27, key: "\u{F705}", icon: "cable.connector.horizontal"),
+            makeInputItem("USB-C", value: 26, key: "\u{F705}", icon: "cable.connector.horizontal"),
             makeInputItem("HDMI", value: 17, key: "\u{F706}", icon: "cable.connector")
         ]
         inputItems.forEach(menu.addItem)
@@ -139,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func triggerHotKey(id: UInt32) {
         guard let item = inputItems.first(where: { item in
             ((id == 1 || id == 11) && item.tag == 15) ||
-            ((id == 2 || id == 12) && item.tag == 27) ||
+            ((id == 2 || id == 12) && item.tag == 26) ||
             ((id == 3 || id == 13) && item.tag == 17)
         }) else { return }
         switchInput(item)
@@ -189,11 +189,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try process.run()
             process.waitUntilExit()
-            if process.terminationStatus == 0 { return .success }
+            if process.terminationStatus == 0 {
+                Thread.sleep(forTimeInterval: 0.15)
+                if let actualValue = readCurrentInput(monitorID: monitorID), actualValue != value {
+                    return .failure("显示器未接受输入值 \(value)，当前值为 \(actualValue)")
+                }
+                return .success
+            }
             let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let detail = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
             return .failure(detail?.isEmpty == false ? detail! : "请检查 DDC/CI")
         } catch { return .failure(error.localizedDescription) }
+    }
+
+    private func readCurrentInput(monitorID: String) -> Int? {
+        let process = Process()
+        let outputPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: m1ddcPath)
+        process.arguments = ["display", monitorID, "get", "input"]
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else { return nil }
+            return Int(output.trimmingCharacters(in: .whitespacesAndNewlines))
+        } catch {
+            return nil
+        }
     }
 
     private func findXG27UCG() -> String? {
@@ -316,7 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.attemptUSBCSwitch(delays: delays, index: index + 1)
                 return
             }
-            self.performSwitch(value: 27, inputName: "USB-C") { success in
+            self.performSwitch(value: 26, inputName: "USB-C") { success in
                 if !success { self.attemptUSBCSwitch(delays: delays, index: index + 1) }
             }
         }
