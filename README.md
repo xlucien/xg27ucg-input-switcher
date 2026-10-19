@@ -27,6 +27,8 @@ Detection is event-driven through CoreAudio and IOKit HID notifications. The app
 
 Download the DMG from Releases, open it, and drag **XG27UCG Input Switcher** to Applications. Launch it once; a display icon then appears in the macOS menu bar and the app writes `~/Library/LaunchAgents/local.louis.xg27ucg-switcher.plist` so it starts at future logins.
 
+The login item always targets the copy under `/Applications`, even if the app is accidentally opened directly from the mounted DMG.
+
 The app is ad-hoc signed, not notarized. On first launch, macOS may require right-clicking the app and choosing **Open**.
 
 ## Build

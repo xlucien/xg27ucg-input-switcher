@@ -106,7 +106,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func enableLaunchAtLogin() {
-        guard let executablePath = Bundle.main.executablePath else {
+        let installedExecutablePath = "/Applications/XG27UCG Input Switcher.app/Contents/MacOS/XG27UCGSwitcher"
+        let executablePath: String
+        if FileManager.default.isExecutableFile(atPath: installedExecutablePath) {
+            executablePath = installedExecutablePath
+        } else if let bundleExecutablePath = Bundle.main.executablePath,
+                  !bundleExecutablePath.hasPrefix("/Volumes/") {
+            executablePath = bundleExecutablePath
+        } else {
             launchAtLoginMenuItem.title = "开机启动：找不到程序路径"
             return
         }
