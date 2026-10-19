@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import CoreAudio
 
 private var m1ddcPath: String {
     if let bundled = Bundle.main.path(forResource: "m1ddc", ofType: nil, inDirectory: "bin"),
@@ -12,8 +13,12 @@ private var m1ddcPath: String {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenuItem: NSMenuItem!
+    private var autoSwitchMenuItem: NSMenuItem!
     private var inputItems: [NSMenuItem] = []
     private var hotKeys: [EventHotKeyRef?] = []
+    private var audioDetectionTimer: Timer?
+    private var meizuHiFiWasPresent = false
+    private var isSwitching = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -21,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.toolTip = "XG27UCG 输入切换"
         buildMenu()
         registerGlobalHotKeys()
+        startAudioDeviceDetection()
     }
 
     private func buildMenu() {
@@ -31,16 +37,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         inputItems = [
-            makeInputItem("DisplayPort", value: 15, key: "1", icon: "display"),
-            makeInputItem("HDMI", value: 17, key: "2", icon: "cable.connector"),
-            makeInputItem("USB-C", value: 27, key: "3", icon: "cable.connector.horizontal")
+            makeInputItem("DisplayPort", value: 15, key: "\u{F704}", icon: "display"),
+            makeInputItem("USB-C", value: 27, key: "\u{F705}", icon: "cable.connector.horizontal"),
+            makeInputItem("HDMI", value: 17, key: "\u{F706}", icon: "cable.connector")
         ]
         inputItems.forEach(menu.addItem)
 
         menu.addItem(.separator())
-        statusMenuItem = NSMenuItem(title: "就绪 · 全局热键 ⌃⌥1 / 2 / 3", action: nil, keyEquivalent: "")
+        statusMenuItem = NSMenuItem(title: "热键：Ctrl + F1/F2/F3 或 Ctrl + Alt + 1/2/3", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+
+        autoSwitchMenuItem = NSMenuItem(title: "自动切换：等待 MEIZU HiFi 声卡", action: nil, keyEquivalent: "")
+        autoSwitchMenuItem.isEnabled = false
+        menu.addItem(autoSwitchMenuItem)
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
@@ -51,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeInputItem(_ title: String, value: Int, key: String, icon: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(switchInput(_:)), keyEquivalent: key)
-        item.keyEquivalentModifierMask = [.control, .option]
+        item.keyEquivalentModifierMask = [.control]
         item.target = self
         item.tag = value
         item.image = NSImage(systemSymbolName: icon, accessibilityDescription: title)
@@ -71,9 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return noErr
         }, 1, &eventType, selfPointer, nil)
 
-        let modifiers = UInt32(controlKey | optionKey)
-        let definitions: [(UInt32, UInt32)] = [(1, 18), (2, 19), (3, 20)]
-        for (id, keyCode) in definitions {
+        let definitions: [(id: UInt32, keyCode: UInt32, modifiers: UInt32)] = [
+            (1, 122, UInt32(controlKey)),
+            (2, 120, UInt32(controlKey)),
+            (3, 99, UInt32(controlKey)),
+            (11, 18, UInt32(controlKey | optionKey)),
+            (12, 19, UInt32(controlKey | optionKey)),
+            (13, 20, UInt32(controlKey | optionKey))
+        ]
+        for (id, keyCode, modifiers) in definitions {
             var ref: EventHotKeyRef?
             let hotKeyID = EventHotKeyID(signature: fourCharCode("XG27"), id: id)
             RegisterEventHotKey(keyCode, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref)
@@ -87,12 +103,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func triggerHotKey(id: UInt32) {
         guard let item = inputItems.first(where: { item in
-            (id == 1 && item.tag == 15) || (id == 2 && item.tag == 17) || (id == 3 && item.tag == 27)
+            ((id == 1 || id == 11) && item.tag == 15) ||
+            ((id == 2 || id == 12) && item.tag == 27) ||
+            ((id == 3 || id == 13) && item.tag == 17)
         }) else { return }
         switchInput(item)
     }
 
     @objc private func switchInput(_ sender: NSMenuItem) {
+        guard !isSwitching else { return }
         let value = sender.tag
         let inputName = sender.title
         setBusy(true, message: "正在切换到 \(inputName)…")
@@ -154,9 +173,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setBusy(_ busy: Bool, message: String) {
+        isSwitching = busy
         inputItems.forEach { $0.isEnabled = !busy }
         statusMenuItem.title = message
         statusItem.button?.image = NSImage(systemSymbolName: busy ? "display.trianglebadge.exclamationmark" : "display", accessibilityDescription: "XG27UCG 输入切换")
+    }
+
+    private func startAudioDeviceDetection() {
+        checkForMeizuHiFi()
+        audioDetectionTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.checkForMeizuHiFi()
+        }
+    }
+
+    private func checkForMeizuHiFi() {
+        let matchingName = audioDeviceNames().first { name in
+            let normalized = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            let isMeizu = normalized.contains("meizu") || normalized.contains("魅族")
+            return isMeizu && normalized.contains("hifi")
+        }
+        let isPresent = matchingName != nil
+
+        if let matchingName {
+            autoSwitchMenuItem.title = "已检测：\(matchingName) → USB-C"
+            if !meizuHiFiWasPresent, !isSwitching,
+               let usbCItem = inputItems.first(where: { $0.tag == 27 }) {
+                switchInput(usbCItem)
+            }
+        } else {
+            autoSwitchMenuItem.title = "自动切换：等待 MEIZU HiFi 声卡"
+        }
+        meizuHiFiWasPresent = isPresent
+    }
+
+    private func audioDeviceNames() -> [String] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize) == noErr else {
+            return []
+        }
+
+        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        var devices = [AudioObjectID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices) == noErr else {
+            return []
+        }
+
+        return devices.compactMap { deviceID in
+            var nameAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioObjectPropertyName,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var unmanagedName: Unmanaged<CFString>?
+            var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &unmanagedName) == noErr,
+                  let name = unmanagedName?.takeUnretainedValue() else {
+                return nil
+            }
+            return name as String
+        }
     }
 
     @objc private func quitApp() { NSApp.terminate(nil) }
