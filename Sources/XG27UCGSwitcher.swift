@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import CoreAudio
+import IOKit.hid
 
 private var m1ddcPath: String {
     if let bundled = Bundle.main.path(forResource: "m1ddc", ofType: nil, inDirectory: "bin"),
@@ -23,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mElement: kAudioObjectPropertyElementMain
     )
     private var meizuHiFiWasPresent = false
+    private var k70WasPresent = false
+    private var hidManager: IOHIDManager?
+    private var retryWorkItems: [DispatchWorkItem] = []
     private var isSwitching = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,9 +36,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         registerGlobalHotKeys()
         startAudioDeviceDetection()
+        startKeyboardDetection()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        retryWorkItems.forEach { $0.cancel() }
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         if let audioDeviceListener {
             AudioObjectRemovePropertyListenerBlock(
                 AudioObjectID(kAudioObjectSystemObject),
@@ -42,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main,
                 audioDeviceListener
             )
+        }
+        if let hidManager {
+            IOHIDManagerUnscheduleFromRunLoop(hidManager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
         }
     }
 
@@ -64,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
 
-        autoSwitchMenuItem = NSMenuItem(title: "自动切换：等待 MEIZU HiFi 声卡", action: nil, keyEquivalent: "")
+        autoSwitchMenuItem = NSMenuItem(title: "自动切换：等待 MEIZU HiFi 或 K70", action: nil, keyEquivalent: "")
         autoSwitchMenuItem.isEnabled = false
         menu.addItem(autoSwitchMenuItem)
         menu.addItem(.separator())
@@ -127,9 +144,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func switchInput(_ sender: NSMenuItem) {
-        guard !isSwitching else { return }
-        let value = sender.tag
-        let inputName = sender.title
+        performSwitch(value: sender.tag, inputName: sender.title)
+    }
+
+    private func performSwitch(value: Int, inputName: String, completion: ((Bool) -> Void)? = nil) {
+        guard !isSwitching else {
+            completion?(false)
+            return
+        }
         setBusy(true, message: "正在切换到 \(inputName)…")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = self?.runM1DDC(value: value)
@@ -139,8 +161,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .success:
                     self.inputItems.forEach { $0.state = ($0.tag == value ? .on : .off) }
                     self.setBusy(false, message: "已发送：\(inputName)")
-                case .failure(let message): self.setBusy(false, message: "失败：\(message)")
-                case .none: self.setBusy(false, message: "切换失败")
+                    completion?(true)
+                case .failure(let message):
+                    self.setBusy(false, message: "失败：\(message)")
+                    completion?(false)
+                case .none:
+                    self.setBusy(false, message: "切换失败")
+                    completion?(false)
                 }
             }
         }
@@ -196,9 +223,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startAudioDeviceDetection() {
-        checkForMeizuHiFi()
+        evaluateAutoSwitch()
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            self?.checkForMeizuHiFi()
+            self?.evaluateAutoSwitch()
         }
         audioDeviceListener = listener
         let status = AudioObjectAddPropertyListenerBlock(
@@ -212,24 +239,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func checkForMeizuHiFi() {
+    private func evaluateAutoSwitch(force: Bool = false) {
         let matchingName = audioDeviceNames().first { name in
             let normalized = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             let isMeizu = normalized.contains("meizu") || normalized.contains("魅族")
             return isMeizu && normalized.contains("hifi")
         }
-        let isPresent = matchingName != nil
+        let meizuPresent = matchingName != nil
+        let k70Name = connectedK70Name()
+        let k70Present = k70Name != nil
+        let newlyDetected = (meizuPresent && !meizuHiFiWasPresent) || (k70Present && !k70WasPresent)
 
         if let matchingName {
             autoSwitchMenuItem.title = "已检测：\(matchingName) → USB-C"
-            if !meizuHiFiWasPresent, !isSwitching,
-               let usbCItem = inputItems.first(where: { $0.tag == 27 }) {
-                switchInput(usbCItem)
-            }
+        } else if let k70Name {
+            autoSwitchMenuItem.title = "已检测：\(k70Name) → USB-C"
         } else {
-            autoSwitchMenuItem.title = "自动切换：等待 MEIZU HiFi 声卡"
+            autoSwitchMenuItem.title = "自动切换：等待 MEIZU HiFi 或 K70"
         }
-        meizuHiFiWasPresent = isPresent
+        meizuHiFiWasPresent = meizuPresent
+        k70WasPresent = k70Present
+
+        if (newlyDetected || force) && (meizuPresent || k70Present) {
+            beginUSBCSwitchRetries()
+        }
+    }
+
+    private func startKeyboardDetection() {
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        hidManager = manager
+        IOHIDManagerSetDeviceMatching(manager, nil)
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let callback: IOHIDDeviceCallback = { context, _, _, _ in
+            guard let context else { return }
+            let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
+            DispatchQueue.main.async { delegate.evaluateAutoSwitch() }
+        }
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, callback, context)
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, callback, context)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        evaluateAutoSwitch()
+    }
+
+    private func connectedK70Name() -> String? {
+        guard let hidManager, let deviceSet = IOHIDManagerCopyDevices(hidManager) else { return nil }
+        for case let device as IOHIDDevice in (deviceSet as NSSet) {
+            guard let name = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String else { continue }
+            if name.localizedCaseInsensitiveContains("K70") { return name.trimmingCharacters(in: .whitespaces) }
+        }
+        return nil
+    }
+
+    private func beginUSBCSwitchRetries() {
+        retryWorkItems.forEach { $0.cancel() }
+        retryWorkItems.removeAll()
+        attemptUSBCSwitch(delays: [0, 3, 8, 15], index: 0)
+    }
+
+    private func attemptUSBCSwitch(delays: [TimeInterval], index: Int) {
+        guard index < delays.count else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if self.isSwitching {
+                self.attemptUSBCSwitch(delays: delays, index: index + 1)
+                return
+            }
+            self.performSwitch(value: 27, inputName: "USB-C") { success in
+                if !success { self.attemptUSBCSwitch(delays: delays, index: index + 1) }
+            }
+        }
+        retryWorkItems.append(workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays[index], execute: workItem)
+    }
+
+    @objc private func handleWake() {
+        meizuHiFiWasPresent = false
+        k70WasPresent = false
+        let workItem = DispatchWorkItem { [weak self] in self?.evaluateAutoSwitch(force: true) }
+        retryWorkItems.append(workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: workItem)
     }
 
     private func audioDeviceNames() -> [String] {

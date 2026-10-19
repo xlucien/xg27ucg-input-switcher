@@ -16,8 +16,10 @@ A lightweight macOS menu-bar utility for switching the ASUS ROG Strix XG27UCG be
 - Bundled `m1ddc`; Homebrew is not required for the DMG build
 - Automatically finds the connected XG27UCG by model name to avoid controlling another monitor
 - Detects a connected MEIZU HiFi audio device and automatically switches the monitor to USB-C
+- Detects a connected Corsair K70 keyboard and automatically switches the monitor to USB-C
+- Retries automatically after wake while the monitor's DDC/CI connection is recovering
 
-Audio detection is event-driven through CoreAudio. The app checks once at launch and is then dormant until macOS reports that the audio-device list changed. It triggers once when a matching device appears and rearms after the device is disconnected, so it does not repeatedly force the input while the device remains connected.
+Detection is event-driven through CoreAudio and IOKit HID notifications. The app checks once at launch and is then dormant until macOS reports a relevant device change. It triggers once when a matching device appears and rearms after the device is disconnected, so it does not repeatedly force the input while the device remains connected.
 
 ## Requirements
 

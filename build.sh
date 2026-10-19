@@ -6,7 +6,7 @@ BUILD_DIR="$ROOT_DIR/build"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="XG27UCG Input Switcher"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
-DMG_PATH="$DIST_DIR/XG27UCG-Input-Switcher-1.1.1.dmg"
+DMG_PATH="$DIST_DIR/XG27UCG-Input-Switcher-1.2.0.dmg"
 M1DDC_BIN="${M1DDC_BIN:-/opt/homebrew/bin/m1ddc}"
 
 [[ -x "$M1DDC_BIN" ]] || { print -u2 "m1ddc not found: $M1DDC_BIN"; exit 1; }
@@ -16,7 +16,7 @@ mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources/bin" "$DIST_DI
 
 swiftc "$ROOT_DIR/Sources/XG27UCGSwitcher.swift" \
   -o "$APP_PATH/Contents/MacOS/XG27UCGSwitcher" \
-  -framework AppKit -framework Carbon -framework CoreAudio
+  -framework AppKit -framework Carbon -framework CoreAudio -framework IOKit
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
 cp "$M1DDC_BIN" "$APP_PATH/Contents/Resources/bin/m1ddc"
 cp "$ROOT_DIR/THIRD_PARTY_LICENSES/m1ddc-LICENSE" "$APP_PATH/Contents/Resources/m1ddc-LICENSE"
